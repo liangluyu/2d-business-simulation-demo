@@ -5,7 +5,7 @@ import { productConfig, craftableProductIds } from '../config/productConfig'
 import { upgradeConfig, type UpgradeId } from '../config/upgradeConfig'
 import type { MarketTrend } from '../models/Market'
 import type { Order } from '../models/Order'
-import type { PlayerState } from '../models/PlayerState'
+import type { AutoPurchaseMode, PlayerState } from '../models/PlayerState'
 import type { ResourceId } from '../models/Resource'
 import { AutomationSystem } from '../systems/AutomationSystem'
 import { EconomySystem } from '../systems/EconomySystem'
@@ -78,6 +78,8 @@ export interface GameViewState {
   }
   automation: {
     autoProductionEnabled: boolean
+    autoPurchaseEnabled: boolean
+    autoPurchaseMode: AutoPurchaseMode
     autoSellEnabled: boolean
     targetProductId: ResourceId | null
     sellReserve: number
@@ -114,6 +116,8 @@ export class WorkshopGame {
     activeProduction: null,
     automation: {
       autoProductionEnabled: false,
+      autoPurchaseEnabled: true,
+      autoPurchaseMode: 'balanced',
       autoSellEnabled: false,
       targetProductId: 'plank',
       sellReserve: 2,
@@ -253,6 +257,18 @@ export class WorkshopGame {
     this.emitAndSave()
   }
 
+  toggleAutoPurchase(): void {
+    const enabled = this.automationSystem.toggleAutoPurchase(this.player)
+    this.pushLog(`自动采购已${enabled ? '开启' : '关闭'}。`)
+    this.emitAndSave()
+  }
+
+  setAutoPurchaseMode(mode: AutoPurchaseMode): void {
+    const nextMode = this.automationSystem.setAutoPurchaseMode(this.player, mode)
+    this.pushLog(`自动采购策略已切换为 ${this.getAutoPurchaseModeLabel(nextMode)}。`)
+    this.emitAndSave()
+  }
+
   setAutoProduct(productId: ResourceId): void {
     this.automationSystem.setTargetProduct(this.player, productId)
     this.pushLog(`自动生产目标已切换为 ${this.getResourceName(productId)}。`)
@@ -274,7 +290,17 @@ export class WorkshopGame {
       this.pushLog(`${this.getResourceName(production.completedProductId)} 制作完成，已入库。`)
     }
 
-    const autoStarted = this.automationSystem.runAutoProduction(this.player, this.productionSystem)
+    const autoStarted = this.automationSystem.runAutoProduction(
+      this.player,
+      time.totalMinutes,
+      this.productionSystem,
+      this.resourceSystem,
+      this.economySystem,
+      this.getProductionSpeedMultiplier(),
+    )
+    autoStarted.purchased?.forEach((purchase) => {
+      this.pushLog(`自动采购：${this.getResourceName(purchase.resourceId)} x${purchase.amount}，花费 ${purchase.totalCost} 金币。`)
+    })
     if (autoStarted.startedProductId) {
       this.pushLog(`自动生产启动：${this.getResourceName(autoStarted.startedProductId)}。`)
     }
@@ -327,12 +353,22 @@ export class WorkshopGame {
     this.player.upgrades = save.player.upgrades
     this.player.unlockedProducts = save.player.unlockedProducts
     this.player.activeProduction = save.player.activeProduction
-    this.player.automation = save.player.automation
+    this.player.automation = {
+      autoProductionEnabled: save.player.automation.autoProductionEnabled,
+      autoPurchaseEnabled: save.player.automation.autoPurchaseEnabled ?? true,
+      autoPurchaseMode: save.player.automation.autoPurchaseMode ?? 'balanced',
+      autoSellEnabled: save.player.automation.autoSellEnabled,
+      targetProductId: save.player.automation.targetProductId,
+      sellReserve: save.player.automation.sellReserve,
+    }
     this.player.employees = save.player.employees
     this.logs.splice(0, this.logs.length, ...save.logs)
     this.orderSystem.importState(save.orders, save.nextOrderRefreshAt)
     this.marketSystem.importState(save.market)
-    this.automationSystem.importState(save.automationMeta.lastAutoSellMinute)
+    this.automationSystem.importState(
+      save.automationMeta.lastAutoSellMinute,
+      save.automationMeta.lastAutoPurchaseMinute ?? 0,
+    )
     this.saveStatus = `已载入 ${new Date(save.savedAt).toLocaleString()}`
     this.pushLog('读取本地存档成功。')
     return true
@@ -415,6 +451,17 @@ export class WorkshopGame {
       automation: { ...this.player.automation },
       logs: [...this.logs],
     })
+  }
+
+  private getAutoPurchaseModeLabel(mode: AutoPurchaseMode): string {
+    switch (mode) {
+      case 'deficit':
+        return '按缺口'
+      case 'stockpile':
+        return '积极备货'
+      default:
+        return '平衡备货'
+    }
   }
 
   private getProductionView(): GameViewState['production'] {

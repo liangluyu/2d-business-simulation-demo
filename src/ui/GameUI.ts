@@ -2,10 +2,15 @@ import { productConfig } from '../config/productConfig'
 import { resourceConfig } from '../config/resourceConfig'
 import type { UpgradeId } from '../config/upgradeConfig'
 import type { GameViewState, WorkshopGame } from '../game/WorkshopGame'
+import type { AutoPurchaseMode } from '../models/PlayerState'
 import type { ResourceId } from '../models/Resource'
 
 export class GameUI {
   private previousResourceValues = new Map<string, number>()
+  private previousGold: number | null = null
+  private previousDay: number | null = null
+  private previousClock = ''
+  private previousSaveStatus = ''
   private lastState: GameViewState | null = null
   private selectedProductId: ResourceId | null = null
   private selectedOrderId: string | null = null
@@ -32,68 +37,103 @@ export class GameUI {
 
     this.root.innerHTML = `
       <div class="shell dashboard-shell">
-        <header class="topbar compact-topbar">
-          <div class="brand-block compact-brand">
-            <p class="eyebrow">Small Workshop Simulator</p>
-            <h1>山镇工坊经营</h1>
-            <p class="hero-copy">一屏管理排产、订单、市场与自动化。</p>
+        <header class="topbar command-topbar">
+          <div class="brand-block mission-brand">
+            <p class="eyebrow">Town Workshop / Command View</p>
+            <h1>山镇工坊经营台</h1>
+            <p class="hero-copy">把采购、排产、交单、行情判断压缩进一套真正可操作的经营驾驶舱。</p>
+            <div class="brand-ribbon">
+              <span>当前配方：${selectedProduct.name}</span>
+              <span>焦点订单：${selectedOrder ? `${selectedOrder.clientName} / ${this.getResourceName(selectedOrder.productId)}` : '暂无'}</span>
+              <span>主卖商品：${selectedMarket ? selectedMarket.name : '暂无'}</span>
+            </div>
           </div>
-          <div class="topbar-stats compact-stats">
-            <div class="headline-card"><span>金币</span><strong>${state.gold}</strong></div>
-            <div class="headline-card"><span>日期</span><strong>第 ${state.time.day} 天</strong></div>
-            <div class="headline-card"><span>时间</span><strong>${this.formatClock(state.time.hour, state.time.minute)}</strong></div>
-            <div class="headline-card"><span>存档</span><strong class="save-status">${state.saveStatus}</strong></div>
+          <div class="topbar-stats command-stats">
+            <div class="headline-card" data-metric-card="gold"><span>金币</span><strong>${state.gold}</strong></div>
+            <div class="headline-card" data-metric-card="day"><span>日期</span><strong>第 ${state.time.day} 天</strong></div>
+            <div class="headline-card" data-metric-card="clock"><span>时间</span><strong>${this.formatClock(state.time.hour, state.time.minute)}</strong></div>
+            <div class="headline-card" data-metric-card="save"><span>存档</span><strong class="save-status">${state.saveStatus}</strong></div>
           </div>
         </header>
 
-        <main class="dashboard-grid">
-          <section class="panel column-panel">
+        <main class="dashboard-grid game-layout">
+          <section class="panel overview-panel">
             <div class="panel-header compact">
-              <div><p class="panel-kicker">Inventory</p><h2>库存与采购</h2></div>
-              <span class="pill">运营清单</span>
+              <div><p class="panel-kicker">Operations</p><h2>经营总览</h2></div>
+              <span class="pill">库存 / 补货 / 人员</span>
             </div>
-            <div class="inventory-table operations-table">
-              <div class="inventory-head"><span>阶段</span><span>资源</span><span>库存</span><span>缺口</span></div>
-              <div class="inventory-body scroll-list">
-                ${state.resources.map((resource) => this.renderResourceRow(resource.id, resource.name, resource.amount, resource.capacity, resource.stage)).join('')}
-              </div>
-            </div>
-            <div class="purchase-actions compact-actions compact-purchase-bar">
-              <button data-buy="wood">木材 +5</button>
-              <button data-buy="ore">矿石 +4</button>
-            </div>
-            <div class="utility-summary utility-summary-thin">
-              <article class="summary-card">
-                <div><p class="panel-kicker">People</p><h2>员工摘要</h2></div>
-                <div class="summary-metrics">
-                  <span>工匠 ${state.employees.find((employee) => employee.id === 'artisan')?.count ?? 0}</span>
-                  <span>销售 ${state.employees.find((employee) => employee.id === 'merchant')?.count ?? 0}</span>
+            <div class="overview-stack">
+              <section class="overview-card inventory-hub">
+                <div class="micro-head">
+                  <div><p class="panel-kicker">Inventory</p><h3>仓储总览</h3></div>
+                  <span class="micro-tag">产线底座</span>
                 </div>
-                <button data-utility="employees">员工管理</button>
-              </article>
-              <article class="summary-card">
-                <div><p class="panel-kicker">Upgrades</p><h2>升级摘要</h2></div>
-                <div class="summary-metrics">
-                  <span>已购 ${state.upgrades.filter((upgrade) => upgrade.level > 0).length}</span>
-                  <span>可买 ${state.upgrades.filter((upgrade) => upgrade.cost !== null && upgrade.cost <= state.gold).length}</span>
+                <div class="inventory-table operations-table">
+                  <div class="inventory-head"><span>阶段</span><span>资源</span><span>库存</span><span>缺口</span></div>
+                  <div class="inventory-body scroll-list">
+                    ${state.resources.map((resource) => this.renderResourceRow(resource.id, resource.name, resource.amount, resource.capacity, resource.stage)).join('')}
+                  </div>
                 </div>
-                <button data-utility="upgrades">升级中心</button>
-              </article>
+              </section>
+
+              <section class="overview-card supply-hub">
+                <div class="micro-head">
+                  <div><p class="panel-kicker">Supply</p><h3>补货站</h3></div>
+                  <span class="micro-tag">手动快补</span>
+                </div>
+                <div class="purchase-actions compact-actions compact-purchase-bar">
+                  <button data-buy="wood">采购木材 +5</button>
+                  <button data-buy="ore">采购矿石 +4</button>
+                </div>
+              </section>
+
+              <section class="overview-card personnel-hub">
+                <div class="micro-head">
+                  <div><p class="panel-kicker">People & Tech</p><h3>人员与升级</h3></div>
+                  <span class="micro-tag">低频管理</span>
+                </div>
+                <div class="overview-summary-grid">
+                  <article class="summary-card command-summary-card">
+                    <div><p class="panel-kicker">People</p><h2>员工配置</h2></div>
+                    <div class="summary-metrics">
+                      <span>工匠 ${state.employees.find((employee) => employee.id === 'artisan')?.count ?? 0}</span>
+                      <span>销售 ${state.employees.find((employee) => employee.id === 'merchant')?.count ?? 0}</span>
+                    </div>
+                    <button data-utility="employees">打开员工管理</button>
+                  </article>
+                  <article class="summary-card command-summary-card">
+                    <div><p class="panel-kicker">Upgrades</p><h2>工坊科技</h2></div>
+                    <div class="summary-metrics">
+                      <span>已购 ${state.upgrades.filter((upgrade) => upgrade.level > 0).length}</span>
+                      <span>可买 ${state.upgrades.filter((upgrade) => upgrade.cost !== null && upgrade.cost <= state.gold).length}</span>
+                    </div>
+                    <button data-utility="upgrades">打开升级中心</button>
+                  </article>
+                </div>
+              </section>
             </div>
           </section>
 
-          <section class="panel center-panel">
-            <div class="subpanel fixed-subpanel">
-              <div class="panel-header compact">
-                <div><p class="panel-kicker">Workshop</p><h2>生产排程</h2></div>
-                <span class="pill ${state.production.active ? 'busy' : 'idle'}">${state.production.active ? '生产中' : '空闲'}</span>
-              </div>
-              <div class="production-topline">
-                <div class="production-status compact-status">
+          <section class="panel command-panel">
+            <div class="command-stage">
+              <section class="stage-lane">
+                <div class="panel-header compact">
+                  <div><p class="panel-kicker">Production Deck</p><h2>工坊主舞台</h2></div>
+                  <span class="pill ${state.production.active ? 'busy' : 'idle'}">${state.production.active ? '生产中' : '待命中'}</span>
+                </div>
+                <div class="production-status stage-status">
                   <p>${state.production.label}</p>
                   <div class="progress-track"><div class="progress-fill" style="width: ${state.production.progress}%"></div></div>
                 </div>
                 ${this.renderStrategyBar(selectedOrder, selectedMarket, suggestedProductId, selectedProduct.id, state)}
+                ${this.renderProductionHint(suggestedProductId, selectedProduct.id, state)}
+              </section>
+
+              <section class="forge-deck">
+                <div class="micro-head">
+                  <div><p class="panel-kicker">Recipe Rail</p><h3>当前产线</h3></div>
+                  <span class="micro-tag">切换配方</span>
+                </div>
                 <div class="recipe-tabs">
                   ${state.products.map((product) => `
                     <button class="recipe-tab ${selectedProduct.id === product.id ? 'active' : ''} ${suggestedProductId === product.id ? 'suggested' : ''}" data-select-product="${product.id}">
@@ -101,76 +141,93 @@ export class GameUI {
                     </button>
                   `).join('')}
                 </div>
-              </div>
-              <div class="production-detail-panel">
-                ${this.renderProductionHint(suggestedProductId, selectedProduct.id, state)}
-                <div class="production-focus">
                 <article class="product-card ${selectedProduct.unlocked ? '' : 'locked'} compact-card focus-card">
-                  <div>
-                    <p class="mini-stage">${this.getStageLabel(selectedProduct.stage)}</p>
-                    <h3>${selectedProduct.name}</h3>
-                    <p>${selectedProduct.description}</p>
+                  <div class="product-card-main">
+                    <div>
+                      <p class="mini-stage">${this.getStageLabel(selectedProduct.stage)}</p>
+                      <h3>${selectedProduct.name}</h3>
+                      <p>${selectedProduct.description}</p>
+                    </div>
+                    <dl>
+                      <div><dt>配方</dt><dd>${selectedProduct.inputs}</dd></div>
+                      <div><dt>耗时</dt><dd>${selectedProduct.durationMinutes} 分钟</dd></div>
+                    </dl>
                   </div>
-                  <dl>
-                    <div><dt>配方</dt><dd>${selectedProduct.inputs}</dd></div>
-                    <div><dt>耗时</dt><dd>${selectedProduct.durationMinutes} 分钟</dd></div>
-                  </dl>
-                  <button data-craft="${selectedProduct.id}" ${selectedProduct.unlocked ? '' : 'disabled'}>
-                    ${selectedProduct.unlocked ? `制作 ${selectedProduct.name}` : '等待解锁'}
-                  </button>
+                  <div class="product-card-action">
+                    <button data-craft="${selectedProduct.id}" ${selectedProduct.unlocked ? '' : 'disabled'}>
+                      ${selectedProduct.unlocked ? `开始制作 ${selectedProduct.name}` : '等待解锁'}
+                    </button>
+                  </div>
                 </article>
-                </div>
-              </div>
+              </section>
             </div>
 
-            <div class="subpanel fill-subpanel">
-              <div class="panel-header compact">
-                <div><p class="panel-kicker">Orders</p><h2>订单看板</h2></div>
-                <span class="pill">优先处理高价急单</span>
-              </div>
-              <div class="order-summary-row">
-                <div class="order-snapshot">${this.renderOrderSnapshot(state)}</div>
-              </div>
-              <div class="toolbar-row order-controls-row">
-                <div class="filter-group">
-                  <button class="toolbar-chip ${this.orderFilter === 'all' ? 'active' : ''}" data-order-filter="all">全部</button>
-                  <button class="toolbar-chip ${this.orderFilter === 'rush' ? 'active' : ''}" data-order-filter="rush">急单</button>
-                  <button class="toolbar-chip ${this.orderFilter === 'premium' ? 'active' : ''}" data-order-filter="premium">高收益</button>
-                  <button class="toolbar-chip ${this.orderFilter === 'stable' ? 'active' : ''}" data-order-filter="stable">稳定</button>
+            <div class="command-floor">
+              <section class="order-briefing">
+                <div class="panel-header compact">
+                  <div><p class="panel-kicker">Priority Board</p><h2>订单简报</h2></div>
+                  <span class="pill">高频决策区</span>
                 </div>
-                <div class="filter-group">
-                  <button class="toolbar-chip ${this.orderSort === 'time' ? 'active' : ''}" data-order-sort="time">按时间</button>
-                  <button class="toolbar-chip ${this.orderSort === 'reward' ? 'active' : ''}" data-order-sort="reward">按报酬</button>
+                <div class="order-summary-row">
+                  <div class="order-snapshot">${this.renderOrderSnapshot(state)}</div>
                 </div>
-                <div class="filter-group">
-                  <button class="toolbar-chip ${this.orderDensity === 'compact' ? 'active' : ''}" data-order-density="compact">紧凑列表</button>
-                  <button class="toolbar-chip ${this.orderDensity === 'expanded' ? 'active' : ''}" data-order-density="expanded">宽展列表</button>
+                ${selectedOrder ? this.renderOrderFocus(selectedOrder, state) : ''}
+                ${selectedOrder ? this.renderExecutionChain(selectedOrder, state, selectedProduct.id) : ''}
+              </section>
+
+              <section class="order-operations">
+                <div class="micro-head">
+                  <div><p class="panel-kicker">Order Queue</p><h3>订单队列</h3></div>
+                  <span class="micro-tag">${visibleOrders.length} 条待处理</span>
                 </div>
-              </div>
-              ${selectedOrder ? this.renderOrderFocus(selectedOrder, state) : ''}
-              ${selectedOrder ? this.renderExecutionChain(selectedOrder, state, selectedProduct.id) : ''}
-              <div class="order-list scroll-list ${this.orderDensity === 'compact' ? 'compact-order-list' : ''}">
-                ${visibleOrders.length > 0 ? visibleOrders.map((order) => `
-                  ${this.orderDensity === 'compact' ? this.renderCompactOrderCard(order, selectedOrder?.id === order.id) : this.renderExpandedOrderCard(order, selectedOrder?.id === order.id)}
-                `).join('') : '<p class="empty-state">当前筛选下没有可处理订单。</p>'}
-              </div>
+                <div class="toolbar-row order-controls-row">
+                  <div class="filter-block">
+                    <span class="toolbar-label">筛选</span>
+                    <div class="filter-group">
+                      <button class="toolbar-chip ${this.orderFilter === 'all' ? 'active' : ''}" data-order-filter="all">全部</button>
+                      <button class="toolbar-chip ${this.orderFilter === 'rush' ? 'active' : ''}" data-order-filter="rush">急单</button>
+                      <button class="toolbar-chip ${this.orderFilter === 'premium' ? 'active' : ''}" data-order-filter="premium">高利</button>
+                      <button class="toolbar-chip ${this.orderFilter === 'stable' ? 'active' : ''}" data-order-filter="stable">稳定</button>
+                    </div>
+                  </div>
+                  <div class="filter-block">
+                    <span class="toolbar-label">排序</span>
+                    <div class="filter-group">
+                      <button class="toolbar-chip ${this.orderSort === 'time' ? 'active' : ''}" data-order-sort="time">按时间</button>
+                      <button class="toolbar-chip ${this.orderSort === 'reward' ? 'active' : ''}" data-order-sort="reward">按报酬</button>
+                    </div>
+                  </div>
+                  <div class="filter-block">
+                    <span class="toolbar-label">显示</span>
+                    <div class="filter-group">
+                      <button class="toolbar-chip ${this.orderDensity === 'compact' ? 'active' : ''}" data-order-density="compact">紧凑</button>
+                      <button class="toolbar-chip ${this.orderDensity === 'expanded' ? 'active' : ''}" data-order-density="expanded">宽展</button>
+                    </div>
+                  </div>
+                </div>
+                <div class="order-list scroll-list ${this.orderDensity === 'compact' ? 'compact-order-list' : ''}">
+                  ${visibleOrders.length > 0 ? visibleOrders.map((order) => `
+                    ${this.orderDensity === 'compact' ? this.renderCompactOrderCard(order, selectedOrder?.id === order.id) : this.renderExpandedOrderCard(order, selectedOrder?.id === order.id)}
+                  `).join('') : '<p class="empty-state">当前筛选下没有可处理订单。</p>'}
+                </div>
+              </section>
             </div>
           </section>
 
-          <section class="panel right-panel">
-            <div class="subpanel">
-              <div class="panel-header compact">
-                <div><p class="panel-kicker">Trade Console</p><h2>交易控制台</h2></div>
-                <span class="pill">卖货与自动化</span>
-              </div>
-              <div class="trade-console">
+          <section class="panel intel-panel">
+            <div class="intel-grid">
+              <section class="market-radar">
+                <div class="panel-header compact">
+                  <div><p class="panel-kicker">Market Radar</p><h2>市场雷达</h2></div>
+                  <span class="pill">卖货判断</span>
+                </div>
                 ${selectedMarket ? this.renderMarketFocus(selectedMarket, state) : ''}
                 <div class="market-list scroll-list small-scroll">
                   ${state.market.map((entry) => `
                     <article class="market-card trend-${entry.trend} compact-card ${selectedMarket?.productId === entry.productId ? 'selected' : ''}" data-select-market="${entry.productId}">
                       <div>
                         <h3>${entry.name}</h3>
-                        <p>${this.getTrendLabel(entry.trend)} · 系数 ${entry.multiplier.toFixed(2)}</p>
+                        <p>${this.getTrendLabel(entry.trend)} / 系数 ${entry.multiplier.toFixed(2)}</p>
                         <div class="sparkline">${this.renderSparkline(entry.history)}</div>
                       </div>
                       <div class="market-actions">
@@ -180,32 +237,67 @@ export class GameUI {
                     </article>
                   `).join('')}
                 </div>
+              </section>
+
+              <section class="automation-rig">
+                <div class="panel-header compact">
+                  <div><p class="panel-kicker">Automation Matrix</p><h2>自动化矩阵</h2></div>
+                  <span class="pill">半自动经营</span>
+                </div>
                 <div class="automation-card compact-card">
-                  <div class="toggle-row"><span>自动生产</span><button data-toggle-auto-production>${state.automation.autoProductionEnabled ? '已开启' : '已关闭'}</button></div>
-                  <div class="toggle-row"><span>自动销售</span><button data-toggle-auto-sell>${state.automation.autoSellEnabled ? '已开启' : '已关闭'}</button></div>
-                  <div class="auto-target-list">
-                    ${state.products.filter((product) => product.unlocked).map((product) => `
-                      <button class="${state.automation.targetProductId === product.id ? 'selected-target' : ''}" data-auto-target="${product.id}">
-                        ${product.name}
-                      </button>
-                    `).join('')}
+                  <div class="automation-section">
+                    <div class="section-caption">自动开关</div>
+                    <div class="toggle-row"><span>自动生产</span><button data-toggle-auto-production>${state.automation.autoProductionEnabled ? '已开启' : '已关闭'}</button></div>
+                    <div class="toggle-row"><span>自动采购</span><button data-toggle-auto-purchase>${state.automation.autoPurchaseEnabled ? '已开启' : '已关闭'}</button></div>
+                    <div class="toggle-row"><span>自动销售</span><button data-toggle-auto-sell>${state.automation.autoSellEnabled ? '已开启' : '已关闭'}</button></div>
                   </div>
-                  <div class="reserve-row">
-                    <span>保留库存</span>
-                    <div class="reserve-actions"><button data-reserve="-1">-</button><strong>${state.automation.sellReserve}</strong><button data-reserve="1">+</button></div>
+                  <div class="automation-section">
+                    <div class="section-caption">采购策略</div>
+                    <div class="auto-mode-block">
+                      <div class="auto-mode-header">
+                        <span>当前模式</span>
+                        <strong>${this.getAutoPurchaseModeLabel(state.automation.autoPurchaseMode)}</strong>
+                      </div>
+                      <div class="auto-mode-list">
+                        ${(['deficit', 'balanced', 'stockpile'] as AutoPurchaseMode[]).map((mode) => `
+                          <button class="${state.automation.autoPurchaseMode === mode ? 'selected-target' : ''}" data-auto-purchase-mode="${mode}">
+                            ${this.getAutoPurchaseModeLabel(mode)}
+                          </button>
+                        `).join('')}
+                      </div>
+                      <p class="auto-mode-copy">${this.getAutoPurchaseModeDescription(state.automation.autoPurchaseMode)}</p>
+                    </div>
+                  </div>
+                  <div class="automation-section">
+                    <div class="section-caption">生产目标</div>
+                    <div class="auto-target-list">
+                      ${state.products.filter((product) => product.unlocked).map((product) => `
+                        <button class="${state.automation.targetProductId === product.id ? 'selected-target' : ''}" data-auto-target="${product.id}">
+                          ${product.name}
+                        </button>
+                      `).join('')}
+                    </div>
+                  </div>
+                  <div class="automation-section">
+                    <div class="section-caption">销售控制</div>
+                    <div class="reserve-row">
+                      <span>保留库存</span>
+                      <div class="reserve-actions"><button data-reserve="-1">-</button><strong>${state.automation.sellReserve}</strong><button data-reserve="1">+</button></div>
+                    </div>
                   </div>
                 </div>
-              </div>
+              </section>
             </div>
           </section>
         </main>
 
-        <footer class="statusbar">
+        <footer class="statusbar command-statusbar">
           <div class="status-chip">生产目标：${state.automation.targetProductId ? this.getResourceName(state.automation.targetProductId) : '未设置'}</div>
           <div class="status-chip">自动生产：${state.automation.autoProductionEnabled ? '开' : '关'}</div>
+          <div class="status-chip">自动采购：${state.automation.autoPurchaseEnabled ? this.getAutoPurchaseModeLabel(state.automation.autoPurchaseMode) : '关'}</div>
           <div class="status-chip">自动销售：${state.automation.autoSellEnabled ? '开' : '关'}</div>
           <div class="status-chip">订单数：${state.orders.length}</div>
-          <div class="status-chip">市场最高价：${this.getBestMarketLine(state)}</div>
+          <div class="status-chip">最高行情：${this.getBestMarketLine(state)}</div>
         </footer>
 
         ${this.renderUtilityDrawer(state)}
@@ -215,6 +307,7 @@ export class GameUI {
 
     this.bindEvents()
     this.animateResourceChanges(state)
+    this.animateMetricChanges(state)
   }
 
   private bindEvents(): void {
@@ -300,6 +393,19 @@ export class GameUI {
       button.onclick = () => this.game.toggleAutoProduction()
     })
 
+    this.root.querySelectorAll<HTMLButtonElement>('[data-toggle-auto-purchase]').forEach((button) => {
+      button.onclick = () => this.game.toggleAutoPurchase()
+    })
+
+    this.root.querySelectorAll<HTMLButtonElement>('[data-auto-purchase-mode]').forEach((button) => {
+      button.onclick = () => {
+        const mode = button.dataset.autoPurchaseMode as AutoPurchaseMode | undefined
+        if (mode) {
+          this.game.setAutoPurchaseMode(mode)
+        }
+      }
+    })
+
     this.root.querySelectorAll<HTMLButtonElement>('[data-toggle-auto-sell]').forEach((button) => {
       button.onclick = () => this.game.toggleAutoSell()
     })
@@ -351,6 +457,22 @@ export class GameUI {
           this.selectedProductId = productId
           this.renderLastState()
         }
+      }
+    })
+
+    this.root.querySelectorAll<HTMLButtonElement>('[data-run-order-plan]').forEach((button) => {
+      button.onclick = () => {
+        const orderId = button.dataset.runOrderPlan
+        if (!orderId || !this.lastState) {
+          return
+        }
+
+        const order = this.lastState.orders.find((entry) => entry.id === orderId)
+        if (!order) {
+          return
+        }
+
+        this.runOrderPlan(order, this.lastState)
       }
     })
 
@@ -439,6 +561,34 @@ export class GameUI {
 
       this.previousResourceValues.set(resource.id, resource.amount)
     })
+  }
+
+  private animateMetricChanges(state: GameViewState): void {
+    const nextClock = this.formatClock(state.time.hour, state.time.minute)
+    this.flashMetricCard('gold', this.previousGold !== null && this.previousGold !== state.gold)
+    this.flashMetricCard('day', this.previousDay !== null && this.previousDay !== state.time.day)
+    this.flashMetricCard('clock', this.previousClock !== '' && this.previousClock !== nextClock)
+    this.flashMetricCard('save', this.previousSaveStatus !== '' && this.previousSaveStatus !== state.saveStatus)
+
+    this.previousGold = state.gold
+    this.previousDay = state.time.day
+    this.previousClock = nextClock
+    this.previousSaveStatus = state.saveStatus
+  }
+
+  private flashMetricCard(metricId: 'gold' | 'day' | 'clock' | 'save', shouldFlash: boolean): void {
+    if (!shouldFlash) {
+      return
+    }
+
+    const card = this.root.querySelector<HTMLElement>(`[data-metric-card="${metricId}"]`)
+    if (!card) {
+      return
+    }
+
+    card.classList.remove('metric-flash')
+    void card.offsetWidth
+    card.classList.add('metric-flash')
   }
 
   private renderResourceRow(
@@ -550,6 +700,28 @@ export class GameUI {
     }
 
     return null
+  }
+
+  private getAutoPurchaseModeLabel(mode: AutoPurchaseMode): string {
+    switch (mode) {
+      case 'deficit':
+        return '按缺口'
+      case 'stockpile':
+        return '积极备货'
+      default:
+        return '平衡备货'
+    }
+  }
+
+  private getAutoPurchaseModeDescription(mode: AutoPurchaseMode): string {
+    switch (mode) {
+      case 'deficit':
+        return '只补当前生产链缺口，最省钱，适合前期现金紧张。'
+      case 'stockpile':
+        return '会把原料仓尽量补到安全线，适合持续跑自动产线。'
+      default:
+        return '先补缺口，再多备一批，停工次数更少。'
+    }
   }
 
   private renderSparkline(history: number[]): string {
@@ -772,7 +944,7 @@ export class GameUI {
     const steps = [
       {
         label: needsRaw ? '补原料' : '原料已齐',
-        meta: needsRaw ? [...rawNeeds.entries()].map(([id, amount]) => `${this.getResourceName(id)} x ${amount}`).join('、') : '可直接进入生产',
+        meta: needsRaw ? [...rawNeeds.entries()].map(([id, amount]) => `${this.getResourceName(id)} x ${amount}`).join(' / ') : '可以直接开工',
         tone: needsRaw ? 'current' : 'done',
       },
       {
@@ -791,12 +963,16 @@ export class GameUI {
         tone: !needsRaw && !needsCraft ? 'current' : 'upcoming',
       },
     ]
+    const executionAction = this.getExecutionAction(order, state)
 
     return `
       <section class="execution-chain">
         <div class="execution-chain-head">
-          <p class="panel-kicker">Execution Chain</p>
-          <span class="pill">补货 -> 对焦 -> 生产 -> 交付</span>
+          <div class="execution-chain-title">
+            <p class="panel-kicker">执行链</p>
+            <span class="pill">补货 -> 对焦 -> 生产 -> 交付</span>
+          </div>
+          <button class="execution-chain-button" data-run-order-plan="${order.id}">${executionAction.label}</button>
         </div>
         <div class="execution-chain-track">
           ${steps.map((step) => `
@@ -806,8 +982,108 @@ export class GameUI {
             </article>
           `).join('')}
         </div>
+        <p class="execution-chain-note">${executionAction.detail}</p>
       </section>
     `
+  }
+
+  private getExecutionAction(
+    order: GameViewState['orders'][number],
+    state: GameViewState,
+  ): { label: string; detail: string } {
+    const inventory = new Map<ResourceId, number>(
+      state.resources.map((resource) => [resource.id, resource.amount] as const),
+    )
+    const rawNeeds = new Map<ResourceId, number>()
+    const craftMinutes = this.resolveCraftPlan(order.productId, order.quantity, inventory, rawNeeds, state)
+    const nextProductId = this.findNextCraftTarget(
+      order.productId,
+      order.quantity,
+      new Map<ResourceId, number>(state.resources.map((resource) => [resource.id, resource.amount] as const)),
+    )
+
+    if (rawNeeds.size > 0) {
+      return {
+        label: '推进一步',
+        detail: '先补缺口原料，再把界面切到当前最该先处理的配方。',
+      }
+    }
+
+    if (craftMinutes > 0 && nextProductId) {
+      return {
+        label: `开工 ${this.getResourceName(nextProductId)}`,
+        detail: '当前原料已够用，直接推进到下一个可执行的生产节点。',
+      }
+    }
+
+    return {
+      label: '直接交付',
+      detail: '目标货物已经备齐，这张订单现在就可以兑现成金币。',
+    }
+  }
+
+  private findNextCraftTarget(
+    resourceId: ResourceId,
+    amountNeeded: number,
+    inventory: Map<ResourceId, number>,
+  ): ResourceId | null {
+    const available = inventory.get(resourceId) ?? 0
+    const used = Math.min(available, amountNeeded)
+    inventory.set(resourceId, available - used)
+
+    const remaining = amountNeeded - used
+    if (remaining <= 0) {
+      return null
+    }
+
+    const definition = productConfig[resourceId]
+    if (definition.inputs.length === 0) {
+      return null
+    }
+
+    for (const input of definition.inputs) {
+      const nestedTarget = this.findNextCraftTarget(input.resourceId, input.amount * remaining, inventory)
+      if (nestedTarget) {
+        return nestedTarget
+      }
+    }
+
+    return resourceId
+  }
+
+  private runOrderPlan(order: GameViewState['orders'][number], state: GameViewState): void {
+    const inventory = new Map<ResourceId, number>(
+      state.resources.map((resource) => [resource.id, resource.amount] as const),
+    )
+    const rawNeeds = new Map<ResourceId, number>()
+    const craftMinutes = this.resolveCraftPlan(order.productId, order.quantity, inventory, rawNeeds, state)
+    const nextProductId = this.findNextCraftTarget(
+      order.productId,
+      order.quantity,
+      new Map<ResourceId, number>(state.resources.map((resource) => [resource.id, resource.amount] as const)),
+    )
+
+    rawNeeds.forEach((amount, resourceId) => {
+      const packSize = resourceId === 'wood' ? 5 : resourceId === 'ore' ? 4 : 1
+      const buyAmount = Math.ceil(amount / packSize) * packSize
+      if (buyAmount > 0) {
+        this.game.buyMaterial(resourceId, buyAmount)
+      }
+    })
+
+    if (nextProductId) {
+      this.selectedProductId = nextProductId
+      this.renderLastState()
+    }
+
+    if (rawNeeds.size === 0 && craftMinutes === 0) {
+      this.game.fulfillOrder(order.id)
+      return
+    }
+
+    if (nextProductId) {
+      this.game.startProduction(nextProductId)
+    }
   }
 
   private resolveCraftPlan(

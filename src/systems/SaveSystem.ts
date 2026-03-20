@@ -12,6 +12,7 @@ export interface SavePayload {
   market: MarketSnapshot
   logs: string[]
   automationMeta: {
+    lastAutoPurchaseMinute: number
     lastAutoSellMinute: number
   }
 }

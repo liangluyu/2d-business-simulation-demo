@@ -1,5 +1,7 @@
 import type { ResourceId } from './Resource'
 
+export type AutoPurchaseMode = 'deficit' | 'balanced' | 'stockpile'
+
 export interface UpgradeLevels {
   workshopTools: number
   salesmanship: number
@@ -16,6 +18,8 @@ export interface ActiveProduction {
 
 export interface AutomationState {
   autoProductionEnabled: boolean
+  autoPurchaseEnabled: boolean
+  autoPurchaseMode: AutoPurchaseMode
   autoSellEnabled: boolean
   targetProductId: ResourceId | null
   sellReserve: number
